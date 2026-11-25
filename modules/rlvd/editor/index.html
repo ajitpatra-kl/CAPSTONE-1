@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>RLVD geometry editor</title>
+<style>
+body { margin: 0; color: #eef4fc; font: 14px system-ui, sans-serif; }
+nav { display: flex; flex-wrap: wrap; gap: 7px; margin: 0; padding: 9px; background: #111d30;
+      border: 1px solid #2c3d55; border-radius: 9px; }
+button { background: #1a2940; color: inherit; border: 1px solid #3c5471; border-radius: 7px;
+         min-height: 36px; padding: 6px 12px; font-weight: 600; cursor: pointer; }
+button:hover { border-color: #75b1f7; }
+button:focus-visible { outline: 2px solid #86c0ff; outline-offset: 2px; }
+button[aria-pressed=true] { background: #254b79; border-color: #80b9fa; }
+button#clear { margin-left: auto; background: transparent; color: #bdcee4; }
+canvas { display: block; width: 100%; height: auto; border-radius: 9px; touch-action: none;
+         cursor: crosshair; background: #0b1322; }
+p { margin: 9px 1px; color: #adbed5; line-height: 1.45; }
+</style>
+<nav aria-label="Drawing tools">
+<button data-mode="roi">Signal rectangle</button>
+<button data-mode="line">Stop line</button>
+<button data-mode="lane">Lane polygon (optional)</button>
+<button id="clear">Reset selected geometry</button>
+</nav>
+<p id="hint"></p>
+<canvas aria-label="Video frame geometry editor"></canvas>
+<script>
+const canvas = document.querySelector("canvas");
+const ctx = canvas.getContext("2d");
+const picture = new Image();
+const modes = document.querySelectorAll("[data-mode]");
+const hints = {
+  roi: "Drag to draw. Drag inside to move, or drag a corner to resize.",
+  line: "Click two endpoints, or drag between them. Drag either handle to edit.",
+  lane: "Click to add vertices. Drag an existing vertex to edit. Three or more vertices form a closed polygon."
+};
+let mode = "roi", geometry = {roi: [], line: [], lane: []};
+let width = 1, height = 1, revision, imageSource, drag, preview;
+
+function send(type, data = {}) {
+  window.parent.postMessage({isStreamlitMessage: true, type, ...data}, "*");
+}
+function resize() {
+  send("streamlit:setFrameHeight", {height: Math.ceil(document.body.getBoundingClientRect().height) + 2});
+}
+function publish() {
+  send("streamlit:setComponentValue", {value: geometry, dataType: "json"});
+}
+function select(tool) {
+  mode = tool;
+  for (const button of modes) button.setAttribute("aria-pressed", button.dataset.mode === tool);
+  document.querySelector("#hint").textContent = hints[tool];
+  draw();
+  resize();
+}
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (picture.complete && picture.naturalWidth) ctx.drawImage(picture, 0, 0, canvas.width, canvas.height);
+  const scale = canvas.width / width;
+  const scaleY = canvas.height / height;
+  const colors = {roi: "#58f29f", line: "#ffda63", lane: "#65c7ff"};
+  const data = preview || geometry;
+  for (const tool of ["lane", "line", "roi"]) {
+    const points = tool === "roi" && data.roi.length === 4 ? corners(data.roi) : data[tool];
+    if (!points.length) continue;
+    ctx.strokeStyle = ctx.fillStyle = colors[tool];
+    ctx.lineWidth = tool === mode ? 3 : 2;
+    ctx.beginPath();
+    points.forEach(([x, y], index) => index ? ctx.lineTo(x * scale, y * scaleY) : ctx.moveTo(x * scale, y * scaleY));
+    if (tool !== "line" && points.length > 2) ctx.closePath();
+    ctx.stroke();
+    if (tool === mode) for (const [x, y] of points) {
+      ctx.beginPath();
+      ctx.arc(x * scale, y * scaleY, 5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+}
+function corners([l,t,r,b]) { return [[l,t],[r,t],[r,b],[l,b]]; }
+function rectangle(a,b) {
+  return [Math.min(a[0],b[0]), Math.min(a[1],b[1]), Math.max(a[0],b[0]), Math.max(a[1],b[1])];
+}
+function position(event) {
+  const box = canvas.getBoundingClientRect();
+  const edge = mode === "roi" ? 0 : 1;
+  return [
+    Math.min(width-edge, Math.max(0, Math.round((event.clientX-box.left) * width/box.width))),
+    Math.min(height-edge, Math.max(0, Math.round((event.clientY-box.top) * height/box.height)))
+  ];
+}
+function near(points, point) {
+  return points.findIndex(p => Math.hypot(p[0]-point[0],p[1]-point[1]) <= 13 * width / canvas.clientWidth);
+}
+canvas.onpointerdown = event => {
+  if (drag || event.button !== 0) return;
+  const start = position(event);
+  const points = mode === "roi" && geometry.roi.length ? corners(geometry.roi) : geometry[mode];
+  const handle = near(points, start);
+  const [l,t,r,b] = geometry.roi;
+  const inside = start[0] >= l && start[0] <= r && start[1] >= t && start[1] <= b;
+  drag = {start, handle, inside, points, pointer: event.pointerId};
+  canvas.setPointerCapture(event.pointerId);
+};
+function update(point) {
+  const {start, handle, inside, points} = drag;
+  const [l,t,r,b] = geometry.roi;
+  const next = {...geometry};
+  if (mode === "roi") {
+    if (handle >= 0) next.roi = rectangle(points[(handle+2)%4], point);
+    else if (inside) {
+      const dx = Math.max(-l, Math.min(width-r, point[0]-start[0]));
+      const dy = Math.max(-t, Math.min(height-b, point[1]-start[1]));
+      next.roi = [l+dx,t+dy,r+dx,b+dy];
+    } else next.roi = rectangle(start, point);
+  } else if (mode === "line") {
+    if (handle >= 0 && points.length === 2) next.line = points.map((p,i) => i === handle ? point : p);
+    else if (points.length === 1) next.line = [points[0], point];
+    else next.line = start.join() === point.join() ? [point] : [start, point];
+  } else {
+    next.lane = handle >= 0 ? points.map((p,i) => i === handle ? point : p) : [...points, point];
+  }
+  return next;
+}
+canvas.onpointermove = event => {
+  if (!drag || event.pointerId !== drag.pointer) return;
+  preview = update(position(event));
+  draw();
+};
+canvas.onpointerup = event => {
+  if (!drag || event.pointerId !== drag.pointer) return;
+  const next = update(position(event));
+  const [l,t,r,b] = next.roi;
+  if (mode !== "roi" || (r > l && b > t)) geometry = next;
+  drag = preview = null;
+  draw();
+  publish();
+};
+canvas.onpointercancel = () => { drag = preview = null; draw(); };
+document.querySelector("#clear").onclick = () => {
+  geometry[mode] = [];
+  draw();
+  publish();
+};
+for (const button of modes) button.onclick = () => select(button.dataset.mode);
+picture.onload = draw;
+window.addEventListener("message", event => {
+  if (event.source !== window.parent || event.data?.type !== "streamlit:render") return;
+  const args = event.data.args;
+  if (revision !== args.revision) {
+    revision = args.revision;
+    geometry = args.geometry;
+    drag = preview = null;
+  }
+  width = args.width;
+  height = args.height;
+  canvas.width = Math.min(width, 1400);
+  canvas.height = Math.max(1, Math.round(canvas.width * height / width));
+  canvas.style.aspectRatio = width + "/" + height;
+  if (imageSource !== args.image) {
+    imageSource = args.image;
+    picture.src = args.image;
+  }
+  select(mode);
+});
+new ResizeObserver(resize).observe(document.body);
+send("streamlit:componentReady", {apiVersion: 1});
+select(mode);
+</script>
+</html>

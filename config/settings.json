@@ -1,0 +1,94 @@
+
+{
+  "app": {
+    "name": "AI Traffic Violation Detection",
+    "version": "1.0.0",
+    "description": "AI-based vehicle speed violation detection system"
+  },
+  "detection": {
+    "model": "yolo11n.pt",
+    "confidence_threshold": 0.4,
+    "iou_threshold": 0.5,
+    "vehicle_classes": [2, 3, 5, 7],
+    "vehicle_class_names": ["car", "motorcycle", "bus", "truck"],
+    "device": "auto"
+  },
+  "anpr": {
+    "enabled": true,
+    "detector_weights": "models/anpr/yolo_best.pt",
+    "ocr_model_dir": "models/anpr",
+    "crop_padding": 0.08,
+    "sample_interval_frames": 5,
+    "buffer_size": 12,
+    "max_attempts_per_track": 8,
+    "max_plates_per_crop": 2,
+    "detection_confidence": 0.35,
+    "ocr_confidence": 0.45,
+    "single_read_confidence": 0.85,
+    "min_plate_width": 28,
+    "min_plate_height": 9,
+    "roboflow_scan": {
+      "scan_all_tracks": true,
+      "ocr_engine": "ppocrv4",
+      "compare_ocr_engines": true,
+      "detector_image_size": 960,
+      "detection_confidence": 0.25,
+      "max_plates_per_crop": 6,
+      "sample_interval_frames": 8,
+      "buffer_size": 16,
+      "ocr_frames_per_track": 5,
+      "min_plate_width": 20,
+      "min_plate_height": 7
+    }
+  },
+  "tracking": {
+    "tracker": "bytetrack",
+    "track_high_thresh": 0.5,
+    "track_low_thresh": 0.1,
+    "new_track_thresh": 0.6,
+    "track_buffer": 30,
+    "match_thresh": 0.8,
+    "min_track_length": 5
+  },
+  "speed_estimation": {
+    "default_speed_limit_kmh": 40.0,
+    "smoothing_window": 7,
+    "min_speed_samples": 5,
+    "max_speed_kmh": 200.0,
+    "min_speed_kmh": 0.0,
+    "kalman_filter": true,
+    "outlier_rejection": true,
+    "outlier_sigma": 2.5,
+    "assumed_road": {
+      "image_points": [
+        [760, 390],
+        [995, 390],
+        [1000, 1000],
+        [260, 1000]
+      ],
+      "width_m": 11.0,
+      "length_m": 50.0
+    },
+    "pixel_scale_mpp": null
+  },
+  "violation": {
+    "min_violation_duration_seconds": 1.0,
+    "speed_buffer_kmh": 0.0,
+    "confirmation_frames": 3
+  },
+  "output": {
+    "videos_dir": "outputs/videos",
+    "evidence_dir": "outputs/evidence",
+    "reports_dir": "outputs/reports",
+    "save_annotated_video": true,
+    "evidence_image_format": "jpg",
+    "video_codec": "mp4v",
+    "max_evidence_images": 1000
+  },
+  "ui": {
+    "page_title": "AI Traffic Violation Detection",
+    "layout": "wide",
+    "sidebar_state": "expanded",
+    "max_upload_size_mb": 500
+  }
+}

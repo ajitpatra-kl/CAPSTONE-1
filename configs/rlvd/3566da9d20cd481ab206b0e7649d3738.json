@@ -1,0 +1,27 @@
+{
+  "name": "tr",
+  "video_id": "d381a3e90fcc72cd55f42f2120e36d2fbf2876f3ad7e04f4935a2e786e69bf51",
+  "width": 1920,
+  "height": 1080,
+  "fps": 29.97,
+  "roi": [
+    1675,
+    185,
+    1766,
+    372
+  ],
+  "line": [
+    [
+      507,
+      724
+    ],
+    [
+      1602,
+      742
+    ]
+  ],
+  "approach": "Bottom",
+  "lane": [],
+  "created": "2026-11-24T08:35:28.782300+00:00",
+  "association": "Selected signal controls the configured stop line and monitored approach"
+}

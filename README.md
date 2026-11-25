@@ -1,5 +1,202 @@
 # AI Traffic Violation Detection
 
+## Unified traffic violation detection (System A)
+
+On Windows, run `launch.bat`, or start Streamlit with
+`python -m streamlit run app.py` from the project environment. The default
+**Unified Monitoring** page accepts one upload and one or more violation
+types. Use the scene preview to configure the selected types, then select
+**Start processing**. Open **Violation Records → Unified sessions** to revisit
+completed runs and export confirmed events, all candidates, track observations,
+or the experiment summary. The earlier individual workflows are available from
+the sidebar under **Standalone tools**. **Overview** and **Analytics** report
+stored unified sessions, and **System & Settings** shows local model-file
+checks and saved scene profiles. Within a run, filter confirmed events by
+type, status, track, registration, or video time. Select an event to review
+its exact evidence frame, optionally cue video playback, and download its
+evidence ZIP.
+
+### Repository audit and structure
+
+The original Streamlit entry point is `app.py`, with `launch.bat` as the Windows
+launcher and dependencies in `requirements.txt`. The three original processors
+each owned a decode loop. They already shared the YOLOv11 vehicle detector and
+Ultralytics ByteTrack wrapper in `modules/speed_detection`. Speed used
+checksum-matched homographies, source timestamps, smoothing, and a sustained
+exceedance rule. RLVD used HSV signal classification, observed lamp onset,
+and a directed finite stop-line crossing. LCVD used native-frame piecewise
+boundaries, stable lane transitions, and gap/overlap checks. Existing evidence
+and reports were filesystem artifacts, with no shared database. ANPR supplied
+plate detection, crop buffering, EasyOCR, and a dedicated Roboflow OCR comparison
+workflow. Tests covered the independent rules, tracking, calibration, ANPR,
+evidence, and the ForeSpeed inputs.
+
+```text
+app.py                         Streamlit entry point
+launch.bat / requirements.txt  Launcher and dependencies
+config/                        Application settings and calibration profiles
+configs/{rlvd,lcvd}/            Existing saved scene geometries
+modules/
+  unified/
+    pipeline.py                Shared input, inference, tracking and evidence
+    engines.py                 Adapters to the three existing rule engines
+    schema.py                  Observations, context, candidates and verification
+    storage.py                 SQLite sessions, candidates, events and exports
+    dashboard.py               Unified setup, video results and saved reports
+  speed_detection/
+    speed_session.py            Shared calibration, timing and speed continuity
+    vehicle_detector.py         Existing YOLOv11 wrapper
+    vehicle_tracker.py          Existing per-video ByteTrack wrapper
+  rlvd/ and lcvd/              Existing rules, geometry, editors and workflows
+  anpr/                        Plate detection and OCR
+  dashboard/                   Navigation, operations, analytics, and legacy reports
+tests/test_unified.py           System A integration and Streamlit coverage
+outputs/unified/                Local SQLite database and session artifacts
+```
+
+### From video to confirmed event
+
+One OpenCV capture decodes the uploaded source during processing. Each frame
+runs through one YOLOv11 detector and one session-local ByteTrack instance.
+Selected engines receive the same track IDs and vehicle observations. IDs can
+repeat across videos, so use `(session_id, track_id)` as the track key and a
+SHA-256 video ID to identify source content. The UI scene preview runs before
+the processing session.
+
+The context keeps the latest 60 observations per track alongside the tracker's
+state. Observations include frame number, timestamp, timestamp validity, class,
+confidence, box, bottom-center point, track age and gap length. Speed, lane,
+signal and stop-line distance are populated when the corresponding engine is
+enabled. The per-frame CSV retains observations beyond the in-memory window.
+
+The overspeed adapter shares calibration and continuity logic with the original
+speed processor. It submits candidates when a sustained exceedance reaches the
+existing duration and consecutive-frame gates. The original speed sample check
+controls confirmation. The red-light adapter submits a directed stop-line
+crossing for the original continuity and signal-history classification. The
+lane-change adapter submits stable transitions and incomplete transition
+diagnostics for the original restricted-boundary and reliability classification.
+Legal, permitted, and uncertain outcomes are available in the candidate export.
+
+Speed-only runs default to the original speed detector and tracker profile.
+Runs with either geometry engine use the existing shared RLVD/LCVD profile
+(detector confidence .15, ByteTrack high .35, low .14, new-track .50). The
+session records which settings were used. Engine confirmation thresholds are
+independent of this choice.
+
+A candidate carries a unique event ID, source and session IDs, track and crossing
+details, recent observations, applicable rule inputs, and evidence frame
+references. The System A verifier delegates to the original rule. The engine
+commits its original episode state independently of the verifier's disposition.
+Confirmed events use the candidate's event ID and add plate results and the
+session video reference.
+
+All three violation types use one session-local plate scanner. It samples
+native-resolution crops using the shared ByteTrack IDs and runs OCR on ranked
+plate crops when a violation is confirmed. The Roboflow checksum restores the
+legacy 960-pixel plate detector profile and PP-OCRv4/EasyOCR comparison. Other
+videos default to EasyOCR. Results preserve absolute plate coordinates and
+their source frame, detection confidence, OCR confidence, registration status,
+and failure details. The existing registration validator and agreement or
+high-confidence rules determine when a number can be shown as recognized.
+Other OCR candidates remain unverified. OCR failures do not discard detected
+plates or confirmed violations.
+
+The annotated video shows red vehicle boxes for confirmed violations for
+`anpr.violation_display_seconds` seconds (default 3). Yellow plate boxes
+are drawn only on frames with a detector result for the same track. This
+avoids displaying a stale box on a moving vehicle. The plate sampling interval
+is controlled by the applicable ANPR profile. Registration text is shown when
+recognized. The dedicated legacy all-track scan and OCR exports remain
+available from the individual workflows.
+
+SQLite stores sessions, candidates and confirmed events in
+`outputs/unified/violations.sqlite3`. Each session keeps the annotated H.264
+video, track CSV and evidence images. The unified results show the annotated
+video and, for each confirmed event, the original and annotated violation
+frame, vehicle crop, and raw and enhanced plate crops when a plate is
+available. The plate source frame is shown when available. Earlier CSVs and evidence stay in their
+existing directories and are accessible in the original screens or legacy
+report categories.
+
+### Test each violation type
+
+| Selection | Scene setup | What to inspect |
+| --- | --- | --- |
+| Overspeed | Upload `dataset/roboflow/vehicles.mp4` and select **Matching video profile**, or set four ordered road corners and known width and length for another video. Set the speed limit. | Calibration label, sustained exceedance and the evidence frame. Roboflow and custom road dimensions produce estimated speeds. Reference profiles with a road polygon retain the original ROI gate. |
+| Red light | Upload an intersection clip showing both the signal transition and vehicle approach. Draw the lamp ROI and stop line, select the side vehicles approach from, and optionally draw an approach polygon. | Signal history, crossing direction, confirmed red onset and crossing evidence. |
+| Lane change | Upload a constant-frame-rate roadway clip. Draw at least three boundaries, including road edges, set the road orientation, lane numbering and monitoring direction, and mark interior dividers restricted or permitted. | Source and target lanes, the boundary classification and before/crossing evidence. |
+| Multiple types | Select speed and lane change on a compatible road clip, or select other types where the scene provides their geometry. | Inspect track IDs, event types and evidence in a single saved session. |
+
+Run the project regression suite with `python -m pytest tests -q`. The unified
+integration tests use real video decoding and ByteTrack, controlled vehicle
+detections, and the real violation rules. They exercise each engine alone,
+all three together, rule dispositions, invalid geometry, OCR failure, storage,
+and report exports. The Streamlit test checks the default workspace, conditional
+controls, and report navigation.
+
+### Verification results
+
+The complete project suite passed **150 tests** with one dependency deprecation
+warning. The real-footage runs below used the local YOLOv11 weights and
+ByteTrack on CPU. The mixed run used a manually marked left carriageway and
+treated the dashed divider as permitted.
+
+| Video and selection | Frames | Detections | Tracks | Observed outcomes | Processing FPS | Mean frame latency |
+| --- | ---: | ---: | ---: | --- | ---: | ---: |
+| Roboflow vehicles, speed only | 538 | 1,375 | 15 | 9 overspeed alerts from the reference calibration | 5.82 | 170.8 ms |
+| Roboflow vehicles, speed and lane change | 538 | 1,833 | 11 | 10 estimated-speed alerts and 1 permitted transition candidate | 5.13 | 194.2 ms |
+| ForeSpeed Kasa T1P1, speed only | 900 | 923 | 3 | Tracks available. Speed evaluation unavailable for this camera. | 13.92 | 71.6 ms |
+
+The referenced evidence files were verified and the three annotated outputs
+were decoded. The 19 Roboflow alert records returned unreadable plate text.
+Red-light confirmation was exercised on a controlled clip with a visible
+green-to-red change. The matching original intersection recording for the
+saved configuration was unavailable in this workspace. These runs provide
+processing measurements. Accuracy metrics require labelled ground truth.
+
+### Implementation files
+
+- Added `modules/unified/{__init__,pipeline,engines,schema,storage,dashboard}.py`,
+  `modules/speed_detection/speed_session.py`, and `tests/test_unified.py`.
+- Updated `app.py`, `modules/dashboard/{components,pages}.py`,
+  `modules/speed_detection/{video_processor,violation_detector}.py`,
+  `modules/rlvd/violation_engine.py`, `modules/lcvd/evidence_generator.py`,
+  and this README.
+
+### Cleanup and recovery
+
+The full suite passed 150 tests before and after cleanup. Root-level backup
+ZIPs are optional for running the app. `cleanup-recovery.zip` contains the
+pre-cleanup versions of edited files and the removal manifest. Saved sessions
+and evidence remain under `outputs/`.
+
+### Experimental comparison
+
+The experiment export records video identity, geometry and configuration, candidate
+and confirmed counts, processing FPS, and mean frame latency in milliseconds.
+FPS uses elapsed processing time through annotated-video encoding after model
+initialization. Mean latency covers the frame loop, including per-frame I/O and
+event work. Label-dependent metrics are null until there are annotated outcomes
+and an agreed matching protocol. Define the unit of a negative example before
+computing the false-positive rate.
+
+A future System B can choose a verifier through an experiment configuration
+and inject it at `process_video(..., verifier=...)`. It can inspect the candidate
+and evidence, then delegate to the rule or reject the candidate. The built-in
+rule still determines whether an event satisfies the original checks. Keep the
+video, model weights, scene geometry, tracker profile and candidate rules
+fixed. Match candidate exports across runs using video ID, rule type, track ID,
+and frame number. Use the session and event IDs to locate individual artifacts.
+
+Lane-change processing retains the existing constant-frame-rate requirement. The optional monitoring direction uses movement along the road at the observed boundary crossing.
+The annotated output uses nominal playback FPS, while track CSVs retain valid
+source timestamps. The supplied saved signal and lane geometries require their
+matching source clips. Evaluation of speed or OCR accuracy and scene-level
+precision/recall requires labelled data. Unified setup reuses saved geometries
+when the source matches and stores applied geometry with each run.
+
+
 ## Number plate recognition
 
 ANPR uses two independent pretrained models on CPU:

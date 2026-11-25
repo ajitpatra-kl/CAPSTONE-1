@@ -1,0 +1,83 @@
+{
+  "forespeed": {
+    "paper": "https://www.mdpi.com/2313-433X/12/10/488",
+    "repository": "https://github.com/ampedsoftware/forespeed",
+    "videos": {
+      "T1P1_Eufy": {
+        "path": "Eufy/T1P1-Eufy-62715e80826c78491bcc6a6cbe707193.mp4",
+        "camera": "Eufy T8441 (CAM-D)",
+        "resolution": [
+          2304,
+          1296
+        ],
+        "sha256": "6249f0949a01c29bbcc537fedd8a9022ab2e5995a993e43655cf261d7b26098a",
+        "reference_speed_mph": 29,
+        "calibration_status": "unavailable"
+      },
+      "T1P1_Kasa": {
+        "path": "Kasa/T1P1-kasa-S_07_1628986050_1628986110.mp4",
+        "camera": "Kasa KC105 (CAM-E)",
+        "resolution": [
+          1920,
+          1080
+        ],
+        "sha256": "bc552159076d07efa8bb7e64d6de219e5e215cba9420e29a8b2a102575748f76",
+        "reference_speed_mph": 29,
+        "calibration_status": "unavailable"
+      }
+    }
+  },
+  "roboflow": {
+    "videos": {
+      "Roboflow_Vehicles": {
+        "path": "roboflow/vehicles.mp4",
+        "camera": "Roboflow Supervision vehicles.mp4",
+        "resolution": [
+          3840,
+          2160
+        ],
+        "sha256": "ac81100d9310bd4e9c02bc0b13b6492781d009742ced347766b2601be3c44ad4",
+        "calibration_status": "reference",
+        "calibration": {
+          "source": "https://github.com/roboflow/notebooks/blob/main/notebooks/how-to-estimate-vehicle-speed-with-computer-vision.ipynb",
+          "image_points": [
+            [
+              1252,
+              787
+            ],
+            [
+              2298,
+              803
+            ],
+            [
+              5039,
+              2159
+            ],
+            [
+              -550,
+              2159
+            ]
+          ],
+          "world_points_m": [
+            [
+              0,
+              0
+            ],
+            [
+              24,
+              0
+            ],
+            [
+              24,
+              249
+            ],
+            [
+              0,
+              249
+            ]
+          ]
+        }
+      }
+    }
+  }
+}

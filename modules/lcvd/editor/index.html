@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Lane boundary editor</title>
+<style>
+body{margin:0;color:#eef4fc;font:14px system-ui,sans-serif}
+nav{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:9px;border:1px solid #2c3d55;background:#111d30;border-radius:9px}
+button,select{color:inherit;background:#1a2940;border:1px solid #49617e;border-radius:7px;min-height:36px;padding:6px 10px;font:inherit}
+button:not(:disabled),select:not(:disabled){cursor:pointer}
+button:disabled,select:disabled{opacity:.45}
+button[aria-pressed=true]{background:#254b79;border-color:#80b9fa}
+button:focus-visible,select:focus-visible{outline:2px solid #86c0ff;outline-offset:2px}
+canvas{display:block;width:100%;height:auto;touch-action:none;border-radius:9px;background:#0b1322;cursor:crosshair}
+p{margin:8px 1px;color:#b6c7dd;line-height:1.45}
+.restricted{color:#ff9296}.permitted{color:#82ecb2}
+</style>
+<nav aria-label="Lane boundary tools">
+<button id="new">Draw boundary</button><button id="finish" disabled>Finish line</button>
+<label>Boundary type <select id="kind" disabled><option>Restricted</option><option>Permitted</option></select></label>
+<button id="delete" disabled>Delete selected</button><button id="undo" disabled>Undo</button><button id="reset">Reset geometry</button>
+</nav>
+<p id="hint" aria-live="polite"></p>
+<p><span class="restricted">■ Restricted</span> &nbsp; <span class="permitted">■ Permitted</span></p>
+<canvas aria-label="Video frame with lane boundaries"></canvas>
+<script>
+const $ = id => document.getElementById(id);
+const canvas = document.querySelector("canvas"), context = canvas.getContext("2d"), picture = new Image();
+let lines=[], undo=[], draft=null, selected=-1, drag=null, width=1, height=1, revision, imageSource;
+let vertical=true, reverse=false;
+const colors={Restricted:"#ff626a",Permitted:"#60e5a1"};
+function send(type, data={}){window.parent.postMessage({isStreamlitMessage:true,type,...data},"*");}
+function resize(){send("streamlit:setFrameHeight",{height:Math.ceil(document.body.getBoundingClientRect().height)+2});}
+function publish(){send("streamlit:setComponentValue",{value:lines,dataType:"json"});}
+function remember(){undo.push(structuredClone(lines));if(undo.length>40)undo.shift();}
+function position(event){
+  const rect=canvas.getBoundingClientRect();
+  return [Math.min(width-1,Math.max(0,Math.round((event.clientX-rect.left)*width/rect.width))),
+          Math.min(height-1,Math.max(0,Math.round((event.clientY-rect.top)*height/rect.height)))];
+}
+const scale = (x,y) => [x*canvas.width/width,y*canvas.height/height];
+const axes = ([x,y]) => vertical?[y,x]:[x,y];
+const image = (a,b) => vertical?scale(b,a):scale(a,b);
+function path(points){points.forEach((p,i)=>{const q=scale(...p);if(i)context.lineTo(...q);else context.moveTo(...q);});}
+function tags(text,x,y,color){
+  context.font="bold 15px system-ui";context.fillStyle="#101826e8";
+  context.fillRect(x-3,y-17,context.measureText(text).width+7,21);
+  context.fillStyle=color;context.fillText(text,x,y);
+}
+function drawRegions(){
+  if(lines.length<3)return;
+  const polylines=lines.map(line=>{
+    const points=line.points.map(axes);
+    return points[0][0]>points.at(-1)[0]?points.reverse():points;
+  });
+  if(polylines.some(points=>points.some((p,i)=>i&&p[0]<=points[i-1][0])))return;
+  const start=Math.max(...polylines.map(p=>p[0][0])),end=Math.min(...polylines.map(p=>p.at(-1)[0]));
+  if(end-start<12)return;
+  function lateral(points,a){
+    const i=points.findIndex(p=>p[0]>=a);
+    if(i<=0)return points[Math.max(0,i)][1];
+    const [l,x]=points[i-1],[r,y]=points[i];
+    return x+(y-x)*(a-l)/(r-l);
+  }
+  const middle=(start+end)/2;
+  polylines.sort((a,b)=>lateral(a,middle)-lateral(b,middle));
+  const knots=[...new Set([start,end,...polylines.flatMap(p=>p.map(v=>v[0]).filter(v=>start<v&&v<end))])].sort((a,b)=>a-b);
+  if(knots.some(a=>polylines.some((p,i)=>i && lateral(p,a)-lateral(polylines[i-1],a)<4)))return;
+  polylines.slice(0,-1).forEach((left,i)=>{
+    const right=polylines[i+1];
+    const polygon=[...knots.map(a=>image(a,lateral(left,a))),...knots.slice().reverse().map(a=>image(a,lateral(right,a)))];
+    context.beginPath();
+    polygon.forEach((p,j)=>j?context.lineTo(...p):context.moveTo(...p));
+    context.closePath();context.fillStyle=i%2?"#659eee35":"#6fd7df25";context.fill();
+    const a=start+.62*(end-start), [x,y]=image(a,(lateral(left,a)+lateral(right,a))/2);
+    tags("Lane "+(reverse?polylines.length-1-i:i+1),x-24,y,"#ffffff");
+  });
+}
+function draw(){
+  context.clearRect(0,0,canvas.width,canvas.height);
+  if(picture.complete&&picture.naturalWidth)context.drawImage(picture,0,0,canvas.width,canvas.height);
+  drawRegions();
+  const all=draft?[...lines,draft]:lines;
+  all.forEach((line,i)=>{
+    const active=i===selected||line===draft;
+    context.strokeStyle=context.fillStyle=colors[line.kind];
+    context.lineWidth=active?4:2;
+    context.beginPath();path(line.points);context.stroke();
+    if(active) for(const point of line.points){context.beginPath();context.arc(...scale(...point),6,0,2*Math.PI);context.fill();}
+    if(line.points.length && line!==draft){
+      const [x,y]=scale(...line.points[Math.floor((line.points.length-1)/2)]);
+      tags("B"+(i+1),Math.min(canvas.width-28,x+8),Math.max(20,y),colors[line.kind]);
+    }
+  });
+}
+function refresh(){
+  $("new").setAttribute("aria-pressed",String(!!draft));
+  $("new").textContent=draft?"Cancel drawing":"Draw boundary";
+  $("finish").disabled=!draft||draft.points.length<2;
+  $("delete").disabled=selected<0||!!draft;
+  $("undo").disabled=!undo.length&&!draft?.points.length;
+  $("kind").disabled=!draft&&selected<0;
+  $("kind").value=(draft||lines[selected])?.kind||"Restricted";
+  $("hint").textContent=draft?"Click along one marking, then choose Finish line. Use two points for a straight line or more for a curve.":
+    "Draw both outside edges and each divider. Select a line to change its type or drag its handles.";
+  draw();resize();
+}
+function distance(point,a,b){
+  const dx=b[0]-a[0],dy=b[1]-a[1],d=dx*dx+dy*dy;
+  const t=d?Math.max(0,Math.min(1,((point[0]-a[0])*dx+(point[1]-a[1])*dy)/d)):0;
+  return Math.hypot(point[0]-a[0]-t*dx,point[1]-a[1]-t*dy);
+}
+canvas.onpointerdown=event=>{
+  if(event.button!==0||drag)return;
+  const p=position(event);
+  if(draft){if(!draft.points.length||distance(p,draft.points.at(-1),draft.points.at(-1))>1)draft.points.push(p);refresh();return;}
+  const radius=13*width/canvas.clientWidth;
+  let nearest=radius, choice=-1;
+  lines.forEach((line,i)=>line.points.slice(1).forEach((point,j)=>{
+    const d=distance(p,line.points[j],point);if(d<nearest){nearest=d;choice=i;}
+  }));
+  if(selected>=0){
+    const handle=lines[selected].points.findIndex(q=>distance(p,q,q)<radius);
+    if(handle>=0){drag={line:selected,handle,id:event.pointerId,initial:structuredClone(lines)};canvas.setPointerCapture(event.pointerId);return;}
+  }
+  selected=choice;refresh();
+};
+canvas.onpointermove=event=>{if(drag?.id===event.pointerId){lines[drag.line].points[drag.handle]=position(event);draw();}};
+canvas.onpointerup=event=>{
+  if(drag?.id!==event.pointerId)return;
+  if(JSON.stringify(lines)!==JSON.stringify(drag.initial)){undo.push(drag.initial);if(undo.length>40)undo.shift();publish();}
+  drag=null;refresh();
+};
+canvas.onpointercancel=()=>{if(drag){lines=drag.initial;drag=null;refresh();}};
+$("new").onclick=()=>{draft=draft?null:{kind:"Restricted",points:[]};selected=-1;refresh();};
+$("finish").onclick=()=>{if(!draft||draft.points.length<2)return;remember();lines.push(draft);draft=null;selected=lines.length-1;refresh();publish();};
+$("kind").onchange=()=>{
+  if(draft)draft.kind=$("kind").value;
+  else if(selected>=0){remember();lines[selected].kind=$("kind").value;publish();}
+  refresh();
+};
+$("delete").onclick=()=>{if(selected<0)return;remember();lines.splice(selected,1);selected=-1;refresh();publish();};
+$("undo").onclick=()=>{
+  if(draft?.points.length)draft.points.pop();
+  else if(undo.length){lines=undo.pop();draft=null;selected=-1;publish();}
+  refresh();
+};
+$("reset").onclick=()=>{if(lines.length)remember();lines=[];draft=null;selected=-1;refresh();publish();};
+picture.onload=draw;
+window.addEventListener("message",event=>{
+  if(event.source!==window.parent||event.data?.type!=="streamlit:render")return;
+  const args=event.data.args;
+  if(revision!==args.revision){revision=args.revision;lines=args.lines;undo=[];selected=-1;draft=drag=null;}
+  width=args.width;height=args.height;vertical=args.axis==="Vertical";reverse=args.reverse;
+  canvas.width=Math.min(width,1400);canvas.height=Math.round(canvas.width*height/width);
+  canvas.style.aspectRatio=width+"/"+height;
+  if(imageSource!==args.image){imageSource=args.image;picture.src=args.image;}
+  refresh();
+});
+new ResizeObserver(resize).observe(document.body);
+send("streamlit:componentReady",{apiVersion:1});
+refresh();
+</script>
+</html>

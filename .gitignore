@@ -1,0 +1,21 @@
+# Python environments and caches
+/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local datasets, models, and generated traffic evidence
+/dataset/
+/models/
+/outputs/
+/*.zip
+
+# Local credentials
+.env
+.env.*
+!.env.example
+/.streamlit/secrets.toml
+*.pem
+*.key
