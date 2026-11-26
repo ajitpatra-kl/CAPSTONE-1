@@ -16,6 +16,71 @@ type, status, track, registration, or video time. Select an event to review
 its exact evidence frame, optionally cue video playback, and download its
 evidence ZIP.
 
+## Temporal-Contextual Violation Verification (System B)
+
+After **Unified Monitoring** finishes, select **Run TCVV Verification** in the
+results. The same control is available under **Violation Records → Unified
+sessions** for eligible saved sessions. Use the **TCVV run** selector to reopen
+a result. Each explicit run gets a separate ID, timestamp, policy version and
+configuration snapshot. The results view links to the original evidence and
+shows the observations and reasons behind each decision.
+
+TCVV starts with the same candidate IDs, tracks, timestamps and configuration
+that System A saved. It reads `tracks.csv` and the session’s compact
+`tcvv-context-v1.jsonl` sidecar. The sidecar adds timestamped raw and confirmed
+signal observations, signal quality and onset, and per-frame lane overlap
+flags. Stop-line geometry, crossing brackets, lane geometry, the speed limit,
+calibration status, and evidence paths already come from System A. SQLite
+stores System B in `tcvv_runs` and `tcvv_results`. Verification uses neither
+video decoding nor inference. Historical sessions with only overspeed
+candidates can run when their track export is available. Sessions with
+red-light or lane-change candidates need the sidecar captured during unified
+processing.
+
+| Policy | Verification criteria |
+| --- | --- |
+| Overspeed | Consecutive, consistent speed estimates from verified calibration must exceed the configured limit for the required duration. Reference and assumed calibrations yield uncertain physical-speed decisions. |
+| Red light | A continuous trajectory must cross the configured finite stop-line segment in the monitored direction, with observations on both sides and a stable red phase whose onset was observed before the crossing. |
+| Lane change | A continuous, non-overlapping anchor trajectory must cross an adjacent boundary, establish travel direction, and stabilize on the destination side. The configured boundary classification and monitoring direction determine whether the transition is restricted. |
+
+An uncertain result records an evidence gap or reliability issue. A rejection
+requires contradicting observations, such as a stable non-red signal at a
+crossing or an observed permitted transition. Signal quality is the existing
+classifier’s heuristic margin, and speed estimates retain the limits of the
+original measurement and calibration.
+
+### Compare against labels
+
+Open **System A vs System B** in the TCVV section. Comparison groups overlapping
+overspeed candidate intervals for the same track and groups repeated crossing
+submissions with the same track, violation type and evidence-frame bracket.
+An episode is confirmed for a system if any of its candidates is confirmed.
+Agreement counts episodes confirmed by both systems and episodes that System A
+did not confirm and System B rejected. The tab also reports TCVV elapsed time
+through result insertion and the ratio to measured System A processing time.
+
+Upload a UTF-8 CSV with columns
+`session_id,video_id,track_id,violation_type,timestamp,label`, using timestamps
+in seconds and `overspeed`, `red_light`, or `lane_change` as the type. Label each
+physical event once with `1` for a violation or `0` for a verified negative.
+Include eligible missed violations and representative negatives. Use the
+original candidate’s timestamp convention, which is the sustained-exceedance
+decision time for overspeed and the crossing time for red light and lane change.
+For an event without a candidate, annotate the equivalent video time and use
+its System A track ID if available. Use a distinct unused track ID for each
+untracked event.
+
+Matching uses the selected session and video, the same track and violation
+type, and the closest candidate timestamp in each episode within the chosen
+tolerance (default 0.5 seconds). It maximizes one-to-one matches using distance
+and deterministic ordering to prioritize eligible pairs. Unmatched positive
+annotations count as misses. Unmatched predictions are reported as unscored.
+Precision, recall, F1, false-positive and false-negative rates use the labeled
+population. An uncertain outcome counts as a non-confirmation for these
+metrics, and uncertain-event rates use all compared episodes. Label enough
+system-only predictions and negative events for meaningful precision and
+false-positive rates. Blank rates have a zero denominator.
+
 ### Repository audit and structure
 
 The original Streamlit entry point is `app.py`, with `launch.bat` as the Windows
@@ -43,6 +108,7 @@ modules/
     schema.py                  Observations, context, candidates and verification
     storage.py                 SQLite sessions, candidates, events and exports
     dashboard.py               Unified setup, video results and saved reports
+  tcvv/                        Stored context, independent rules, run history and comparison
   speed_detection/
     speed_session.py            Shared calibration, timing and speed continuity
     vehicle_detector.py         Existing YOLOv11 wrapper
@@ -51,6 +117,7 @@ modules/
   anpr/                        Plate detection and OCR
   dashboard/                   Navigation, operations, analytics, and legacy reports
 tests/test_unified.py           System A integration and Streamlit coverage
+tests/test_tcvv.py              TCVV policy, storage, evaluation and Streamlit coverage
 outputs/unified/                Local SQLite database and session artifacts
 ```
 

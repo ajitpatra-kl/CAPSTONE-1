@@ -319,11 +319,14 @@ def process_video(path, root, settings, dataset_config, *, speed_options=None, r
         start = perf_counter()
         with (directory / "encoder.log").open("wb") as log, subprocess.Popen(
             command, stdin=subprocess.PIPE, stderr=log,
-        ) as encoder, (directory / "tracks.csv").open("w", encoding="utf-8", newline="") as tracks:
+        ) as encoder, (directory / "tracks.csv").open("w", encoding="utf-8", newline="") as tracks, (
+            directory / "tcvv-context-v1.jsonl"
+        ).open("w", encoding="utf-8") as temporal:
             try:
+                temporal.write(json.dumps({"session_id": session_id, "video_id": video_id}) + "\n")
                 frames, detections, invalid, elapsed = process_frames(
                     capture, encoder.stdin, tracks, detector, tracker, collector,
-                    speed, red, lane, fps, expected, (height, width), progress,
+                    speed, red, lane, fps, expected, (height, width), progress, temporal,
                 )
             finally:
                 encoder.stdin.close()
@@ -363,7 +366,7 @@ def process_video(path, root, settings, dataset_config, *, speed_options=None, r
 
 
 def process_frames(capture, output, tracks, detector, tracker, collector, speed, red, lane,
-                   fps, expected, shape, progress):
+                   fps, expected, shape, progress, temporal=None):
     writer = csv.writer(tracks)
     writer.writerow(["session_id", "frame_number", "timestamp", "track_id", "vehicle_class",
                      "confidence", "bbox", "bottom_center", "speed_kmh", "lane_id",
@@ -402,6 +405,12 @@ def process_frames(capture, output, tracks, detector, tracker, collector, speed,
             red.prepare(image, timestamp)
         if lane:
             lane.prepare(active)
+        if temporal is not None and (red or lane):
+            temporal.write(json.dumps({
+                "frame": index, "timestamp": timestamp, "timing_valid": valid,
+                "signal": asdict(red.sample) if red else None,
+                "lane_overlap_tracks": sorted(int(tid) for tid in lane.ambiguous) if lane else None,
+            }, allow_nan=False, separators=(",", ":")) + "\n")
         canvas = image.copy()
         for scene in collector.scenes.values():
             scene.draw(canvas)

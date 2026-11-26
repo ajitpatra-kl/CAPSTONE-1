@@ -179,6 +179,20 @@ def test_unified_session(selected, video, tmp_path, monkeypatch):
         assert {row["lane_id"] for row in track_rows} == {"", "1", "2"}
     exported = list(csv.DictReader(io.StringIO(csv_export(events))))
     assert {row["event_id"] for row in exported} == {row["event_id"] for row in events}
+    from modules.tcvv.storage import read_results, run_verification
+
+    original_calls = counts.copy()
+    evidence = {Path(path): Path(path).stat().st_mtime_ns for row in events
+                for path in row["evidence_paths"].values() if path}
+    tcvv_run = run_verification(database, result["session_id"])
+    decisions = read_results(database, result["session_id"], tcvv_run["run_id"])
+    assert {row["candidate_id"] for row in decisions} == {row["event_id"] for row in candidates}
+    expected = {"overspeed": "UNCERTAIN", "red_light": "CONFIRMED", "lane_change": "CONFIRMED"}
+    assert all(row["decision"] == expected[row["violation_type"]] for row in decisions), decisions
+    assert counts == original_calls and detector.calls == len(X)
+    assert read_records(database, "events", result["session_id"]) == events
+    assert read_records(database, "candidates", result["session_id"]) == candidates
+    assert all(path.stat().st_mtime_ns == modified for path, modified in evidence.items())
 
 
 def test_permitted_transition_and_anpr_failure(video, tmp_path, monkeypatch):

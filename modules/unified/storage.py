@@ -24,6 +24,8 @@ def save_session(database, session, candidates, events):
                 event_id TEXT PRIMARY KEY REFERENCES candidates,
                 session_id TEXT NOT NULL REFERENCES sessions, payload TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS candidates_by_session ON candidates(session_id);
+            CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id);
         """)
         connection.execute("INSERT INTO sessions VALUES (?, ?)",
                            (session["session_id"], json.dumps(session, allow_nan=False)))

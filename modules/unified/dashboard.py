@@ -488,6 +488,11 @@ def render_summary(output, summary, key):
                               "application/json", key=key + "_experiment", on_click="ignore")
 
 
+    from modules.tcvv.dashboard import render_tcvv
+
+    render_tcvv(database, summary, candidates, events, key, render_evidence)
+
+
 def render_evidence(record, confirmed):
     paths = record["evidence_paths"]
     frame = record["frame_number"]
